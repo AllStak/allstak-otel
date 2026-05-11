@@ -1,7 +1,7 @@
 {
   "name": "@allstak/otel",
   "version": "0.1.0-beta.1",
-  "description": "Standalone AllStak OpenTelemetry OTLP JSON exporter. No @allstak/* runtime dependencies.",
+  "description": "Internal experimental AllStak OpenTelemetry OTLP JSON exporter preview. Public Stable certification is not complete.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
