@@ -15,11 +15,11 @@
   "files": ["dist", "README.md", "LICENSE"],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/allstak-io/allstak-otel.git"
+    "url": "git+https://github.com/AllStak/allstak-otel.git"
   },
   "homepage": "https://allstak.sa",
   "bugs": {
-    "url": "https://github.com/allstak-io/allstak-otel/issues"
+    "url": "https://github.com/AllStak/allstak-otel/issues"
   },
   "publishConfig": {
     "access": "public"
