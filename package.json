@@ -1,7 +1,7 @@
 {
   "name": "@allstak/otel",
-  "version": "0.1.0-beta.1",
-  "description": "Internal experimental AllStak OpenTelemetry OTLP JSON exporter preview. Public Stable certification is not complete.",
+  "version": "0.1.0-beta.4",
+  "description": "AllStak OpenTelemetry OTLP JSON exporter (beta). Batches, retries, and redacts sensitive attributes before sending spans to AllStak.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -12,7 +12,12 @@
       "require": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/AllStak/allstak-otel.git"
@@ -34,13 +39,17 @@
     "@opentelemetry/sdk-trace-base": ">=1.0.0"
   },
   "peerDependenciesMeta": {
-    "@opentelemetry/sdk-trace-base": { "optional": true }
+    "@opentelemetry/sdk-trace-base": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "tsup": "^8.0.0",
     "typescript": "^5.3.0",
     "vitest": "^1.6.1"
   },
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "license": "MIT"
 }
