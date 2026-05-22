@@ -26,7 +26,7 @@ function makeExporter(overrides: Partial<ConstructorParameters<typeof AllStakOte
   const fetchImpl = (overrides.fetch as typeof fetch) ?? (vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch);
   return new AllStakOtelExporter({
     apiKey: 'ask_dev_test',
-    host: 'https://api.dev.allstak.sa',
+    host: 'https://api.allstak.sa',
     serviceName: 'otel-test',
     environment: 'development',
     release: 'tier1-test',
@@ -250,7 +250,7 @@ describe('@allstak/otel — transport / fail-open / retry / batching', () => {
     exporter.export([makeSpan({ name: 'GET /otel' })]);
     await exporter.forceFlush();
     expect(fetchSpy).toHaveBeenCalled();
-    expect(fetchSpy.mock.calls[0][0]).toBe('https://api.dev.allstak.sa/ingest/v1/otel/v1/traces');
+    expect(fetchSpy.mock.calls[0][0]).toBe('https://api.allstak.sa/ingest/v1/otel/v1/traces');
     const init = fetchSpy.mock.calls[0][1];
     expect(init.headers['X-AllStak-Key']).toBe('ask_dev_test');
     expect(init.headers['User-Agent']).toBe(`${SDK_NAME}/${SDK_VERSION}`);
