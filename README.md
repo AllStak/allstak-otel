@@ -53,7 +53,6 @@ await exporter.forceFlush();
 | Option | Description |
 | --- | --- |
 | `apiKey` | Project API key. |
-| `host` | Optional ingest host override for self-hosted AllStak. |
 | `serviceName` | Service name attached to resource attributes. |
 | `environment` | Deployment environment. |
 | `release` | App version or commit SHA. |
