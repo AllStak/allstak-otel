@@ -67,6 +67,8 @@ export interface AllStakOtelExporterConfig {
   exportTimeoutMs?: number;
   /** Max retry attempts for transient failures. Default 3. */
   maxRetries?: number;
+  /** Register the configured release at exporter startup. Default true. */
+  autoRegisterRelease?: boolean;
   /** Enable debug logging. Default false. */
   debug?: boolean;
   /** Override fetch (for testing). */
@@ -87,6 +89,7 @@ export class AllStakOtelExporter {
   private readonly endpoint: string;
   private readonly cfg: Required<Omit<AllStakOtelExporterConfig, 'fetch' | 'redactKeys' | 'host' | 'serviceName' | 'environment' | 'release'>> &
     Pick<AllStakOtelExporterConfig, 'fetch' | 'redactKeys' | 'serviceName' | 'environment' | 'release'>;
+  private readonly releaseEndpoint: string;
   private readonly fetchImpl: typeof fetch;
   private queue: QueuedSpan[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -100,6 +103,7 @@ export class AllStakOtelExporter {
     }
     const host = (config.host || DEFAULT_HOST).replace(/\/$/, '');
     this.endpoint = `${host}/ingest/v1/otel/v1/traces`;
+    this.releaseEndpoint = `${host}/ingest/v1/releases`;
     this.cfg = {
       apiKey: config.apiKey,
       serviceName: config.serviceName,
@@ -111,6 +115,7 @@ export class AllStakOtelExporter {
       scheduledDelayMs: config.scheduledDelayMs ?? DEFAULT_SCHEDULED_DELAY_MS,
       exportTimeoutMs: config.exportTimeoutMs ?? DEFAULT_EXPORT_TIMEOUT_MS,
       maxRetries: config.maxRetries ?? DEFAULT_MAX_RETRIES,
+      autoRegisterRelease: config.autoRegisterRelease ?? true,
       debug: config.debug ?? false,
       fetch: config.fetch,
     };
@@ -118,6 +123,7 @@ export class AllStakOtelExporter {
     if (!this.fetchImpl) {
       throw new Error('AllStakOtelExporter: fetch is not available in this runtime');
     }
+    this.registerRuntimeRelease();
   }
 
   /** OTel SpanExporter contract. */
@@ -259,6 +265,29 @@ export class AllStakOtelExporter {
     }
   }
 
+  private registerRuntimeRelease(): void {
+    if (!this.cfg.autoRegisterRelease || !this.cfg.release || isLikelyTestRuntime()) return;
+    const body = JSON.stringify({
+      version: this.cfg.release,
+      environment: this.cfg.environment,
+      commitSha: undefined,
+      branch: undefined,
+      author: null,
+      message: null,
+    });
+    void this.fetchImpl(this.releaseEndpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-AllStak-Key': this.cfg.apiKey,
+        'User-Agent': `${SDK_NAME}/${SDK_VERSION}`,
+      },
+      body,
+    }).catch((err: unknown) => {
+      if (this.cfg.debug) this.log(`release registration failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
+
   private log(msg: string): void {
     // eslint-disable-next-line no-console
     if (this.cfg.debug) console.warn(`[${SDK_NAME}] ${msg}`);
@@ -274,6 +303,13 @@ function isRetryable(err: Error): boolean {
   }
   // Network errors, aborts → retryable.
   return true;
+}
+
+function isLikelyTestRuntime(): boolean {
+  const proc = (globalThis as any).process;
+  const env = proc?.env ?? {};
+  const lifecycle = String(env.npm_lifecycle_event ?? '');
+  return env.NODE_ENV === 'test' || lifecycle.includes('test') || Boolean(env.VITEST);
 }
 
 function sleep(ms: number): Promise<void> {
