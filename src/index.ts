@@ -13,6 +13,41 @@ const DEFAULT_SCHEDULED_DELAY_MS = 2_000;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_RETRY_BASE_DELAY_MS = 500;
 const DEFAULT_RETRY_MAX_DELAY_MS = 8_000;
+/** Upper bound for any honored Retry-After delay. */
+const MAX_RETRY_AFTER_MS = 300_000;
+
+/**
+ * Parse an HTTP `Retry-After` header into a delay in milliseconds.
+ *
+ * Supports the two RFC 7231 forms:
+ *   - delta-seconds: a non-negative integer (e.g. "120" → 120000ms)
+ *   - HTTP-date: an absolute date; the delta from `now` is returned (clamped ≥ 0)
+ *
+ * Returns 0 when the header is absent, empty, or unparseable so callers can
+ * fall back to their computed backoff. The result is clamped to
+ * MAX_RETRY_AFTER_MS (300000). Pure and side-effect free.
+ */
+export function parseRetryAfter(headerValue: string | null, now: number): number {
+  if (headerValue == null) return 0;
+  const raw = headerValue.trim();
+  if (raw === '') return 0;
+
+  let ms: number;
+  if (/^\d+$/.test(raw)) {
+    // delta-seconds: a bare non-negative integer.
+    const seconds = Number(raw);
+    if (!Number.isFinite(seconds) || seconds < 0) return 0;
+    ms = seconds * 1000;
+  } else {
+    // HTTP-date form.
+    const when = Date.parse(raw);
+    if (Number.isNaN(when)) return 0;
+    const delta = when - now;
+    ms = delta > 0 ? delta : 0;
+  }
+
+  return Math.min(ms, MAX_RETRY_AFTER_MS);
+}
 
 export interface AllStakOtelExporterConfig {
   apiKey: string;
@@ -175,12 +210,19 @@ export class AllStakOtelExporter {
         lastError = err instanceof Error ? err : new Error(String(err));
         if (attempt === this.cfg.maxRetries) break;
         if (!isRetryable(lastError)) break;
-        const delay = Math.min(
-          DEFAULT_RETRY_MAX_DELAY_MS,
-          DEFAULT_RETRY_BASE_DELAY_MS * 2 ** attempt,
-        );
-        const jitter = Math.floor(Math.random() * (delay / 4));
-        await sleep(delay + jitter);
+        // Honor a server-provided Retry-After on 429/503 when present;
+        // otherwise fall back to exponential backoff with jitter.
+        const retryAfterMs = (lastError as Error & { retryAfterMs?: number }).retryAfterMs ?? 0;
+        if (retryAfterMs > 0) {
+          await sleep(Math.min(retryAfterMs, MAX_RETRY_AFTER_MS));
+        } else {
+          const delay = Math.min(
+            DEFAULT_RETRY_MAX_DELAY_MS,
+            DEFAULT_RETRY_BASE_DELAY_MS * 2 ** attempt,
+          );
+          const jitter = Math.floor(Math.random() * (delay / 4));
+          await sleep(delay + jitter);
+        }
       }
     }
     throw lastError;
@@ -203,6 +245,13 @@ export class AllStakOtelExporter {
       if (!response.ok) {
         const err = new Error(`AllStak OTLP export failed: HTTP ${response.status}`);
         (err as Error & { status?: number }).status = response.status;
+        if (response.status === 429 || response.status === 503) {
+          const headerValue = response.headers?.get?.('Retry-After') ?? null;
+          (err as Error & { retryAfterMs?: number }).retryAfterMs = parseRetryAfter(
+            headerValue,
+            Date.now(),
+          );
+        }
         throw err;
       }
     } finally {
