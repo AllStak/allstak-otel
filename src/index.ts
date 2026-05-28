@@ -2,12 +2,21 @@ import { SDK_NAME, SDK_VERSION } from './version';
 import { toOtlpJson } from './otlp';
 import { SessionTracker } from './session';
 import type { SessionStatus } from './session';
+import {
+  OfflineQueue,
+  DEFAULT_MAX_ENTRIES,
+  DEFAULT_MAX_BYTES,
+  DEFAULT_MAX_AGE_MS,
+} from './persistence';
+import type { PersistenceAdapter, OfflineQueueConfig } from './persistence';
 
 export { SDK_NAME, SDK_VERSION } from './version';
 export { toOtlpJson, toOtlpSpan, encodeAttributes } from './otlp';
 export type { OtlpEncodeConfig } from './otlp';
 export { SessionTracker } from './session';
 export type { SessionStatus, SessionTrackerConfig } from './session';
+export { OfflineQueue, FileSpoolAdapter } from './persistence';
+export type { PersistenceAdapter, PersistedEntry, OfflineQueueConfig } from './persistence';
 
 const DEFAULT_HOST = 'https://api.allstak.sa';
 const DEFAULT_EXPORT_TIMEOUT_MS = 5_000;
@@ -82,6 +91,17 @@ export interface AllStakOtelExporterConfig {
   userId?: string;
   /** Platform reported on the session payload. Default "node". */
   platform?: string;
+  /**
+   * Persist OTLP trace batches that fail to deliver (network error, retries
+   * exhausted, offline, or shutdown with events still buffered) to a filesystem
+   * spool and replay them on the next init, so buffered telemetry survives a
+   * process restart or a network outage (Sentry offline-store parity). Payloads
+   * are already PII-scrubbed before they are written. Default true; degrades to
+   * a silent no-op when the spool dir is not writable (read-only FS, edge,
+   * serverless). Session lifecycle calls are never persisted. */
+  enableOfflineQueue?: boolean;
+  /** Tune the offline spool (dir, caps, or a custom persistence adapter). */
+  offlineQueue?: Partial<Pick<OfflineQueueConfig, 'dir' | 'maxEntries' | 'maxBytes' | 'maxAgeMs' | 'adapter'>>;
   /** Enable debug logging. Default false. */
   debug?: boolean;
   /** Override fetch (for testing). */
@@ -100,11 +120,13 @@ export class AllStakOtelExporter {
   readonly sdkVersion = SDK_VERSION;
 
   private readonly endpoint: string;
-  private readonly cfg: Required<Omit<AllStakOtelExporterConfig, 'fetch' | 'redactKeys' | 'host' | 'serviceName' | 'environment' | 'release' | 'userId'>> &
-    Pick<AllStakOtelExporterConfig, 'fetch' | 'redactKeys' | 'serviceName' | 'environment' | 'release' | 'userId'>;
+  private readonly cfg: Required<Omit<AllStakOtelExporterConfig, 'fetch' | 'redactKeys' | 'host' | 'serviceName' | 'environment' | 'release' | 'userId' | 'offlineQueue'>> &
+    Pick<AllStakOtelExporterConfig, 'fetch' | 'redactKeys' | 'serviceName' | 'environment' | 'release' | 'userId' | 'offlineQueue'>;
   private readonly releaseEndpoint: string;
   private readonly fetchImpl: typeof fetch;
   private readonly session: SessionTracker;
+  private readonly offlineQueue: OfflineQueue;
+  private offlineDrainPromise: Promise<void> = Promise.resolve();
   private queue: QueuedSpan[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
   private inflight = 0;
@@ -131,6 +153,8 @@ export class AllStakOtelExporter {
       maxRetries: config.maxRetries ?? DEFAULT_MAX_RETRIES,
       autoRegisterRelease: config.autoRegisterRelease ?? true,
       enableAutoSessionTracking: config.enableAutoSessionTracking ?? true,
+      enableOfflineQueue: config.enableOfflineQueue ?? true,
+      offlineQueue: config.offlineQueue,
       platform: config.platform ?? 'node',
       userId: config.userId,
       debug: config.debug ?? false,
@@ -154,8 +178,37 @@ export class AllStakOtelExporter {
       debug: this.cfg.debug,
       fetch: this.fetchImpl,
     });
+    const oq = this.cfg.offlineQueue ?? {};
+    // Under a unit-test runtime the default filesystem spool is suppressed so
+    // suites don't share <tmpdir>/allstak-otel-spool across exporters (parity
+    // with the session-tracking and release-registration test guards). Tests
+    // that opt into persistence pass an explicit `adapter` or `dir`, which
+    // re-enables it deterministically.
+    const explicitStore = oq.adapter != null || oq.dir != null;
+    const offlineEnabled = this.cfg.enableOfflineQueue && (explicitStore || !isLikelyTestRuntime());
+    this.offlineQueue = new OfflineQueue({
+      enabled: offlineEnabled,
+      maxEntries: oq.maxEntries ?? DEFAULT_MAX_ENTRIES,
+      maxBytes: oq.maxBytes ?? DEFAULT_MAX_BYTES,
+      maxAgeMs: oq.maxAgeMs ?? DEFAULT_MAX_AGE_MS,
+      dir: oq.dir,
+      adapter: oq.adapter as PersistenceAdapter | undefined,
+      debug: this.cfg.debug,
+    });
     this.registerRuntimeRelease();
     this.session.start();
+    // Replay any batches persisted by a previous run. Async + fail-open so it
+    // never blocks init; runs after start() so the live session is set up first.
+    this.offlineDrainPromise = this.drainOfflineQueue();
+  }
+
+  /**
+   * Resolves when the replay of any batches persisted by a previous run has
+   * finished. Init never blocks on this; it is exposed for graceful shutdown
+   * and tests. Always resolves (the drain is fail-open).
+   */
+  whenOfflineDrainSettled(): Promise<void> {
+    return this.offlineDrainPromise;
   }
 
   /** Stable session id attached to every exported trace batch. */
@@ -201,6 +254,11 @@ export class AllStakOtelExporter {
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    // Let any in-progress replay of previously-persisted batches settle (it
+    // becomes a no-op once shuttingDown is set) so it cannot race the drain.
+    await this.offlineDrainPromise.catch(() => {});
+    // Flush whatever is still buffered; failures here are persisted to the
+    // offline spool by sendBatch so they survive the restart.
     await this.drain();
     // Best-effort, fire-and-forget; never blocks or throws the shutdown path.
     this.session.end();
@@ -234,6 +292,8 @@ export class AllStakOtelExporter {
   private async sendBatch(batch: QueuedSpan[], originatingCallback?: ExportCallback): Promise<void> {
     const spans = batch.map((q) => q.span);
     const callbacks = batch.map((q) => q.callback).filter((cb): cb is ExportCallback => !!cb);
+    // toOtlpJson runs the PII sanitizer (encodeAttributes → isSensitiveKey), so
+    // `body` below is already scrubbed and safe to persist to disk on failure.
     const payload = toOtlpJson(spans, {
       serviceName: this.cfg.serviceName,
       environment: this.cfg.environment,
@@ -241,18 +301,61 @@ export class AllStakOtelExporter {
       redactKeys: this.cfg.redactKeys,
       sessionId: this.session.getSessionId(),
     });
+    const body = JSON.stringify(payload);
     this.inflight++;
     try {
-      await this.sendWithRetry(JSON.stringify(payload));
+      await this.sendWithRetry(body);
       for (const cb of callbacks) cb({ code: 0 });
       originatingCallback?.({ code: 0 });
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       if (this.cfg.debug) this.log(`export failed after retries: ${error.message}`);
+      // Persist the already-scrubbed body unless the failure is permanent
+      // (4xx other than 429) — those would never succeed on replay either.
+      if (!isPermanentlyUndeliverable(error)) {
+        await this.persistFailedBody(body);
+      }
       for (const cb of callbacks) cb({ code: 1, error });
       originatingCallback?.({ code: 1, error });
     } finally {
       this.inflight--;
+    }
+  }
+
+  /** Fail-open persist of a scrubbed batch body to the offline spool. */
+  private async persistFailedBody(body: string): Promise<void> {
+    try {
+      const stored = await this.offlineQueue.persist(body);
+      if (stored && this.cfg.debug) this.log('persisted failed batch to offline spool');
+    } catch (err) {
+      // Never let persistence failures escape the export path.
+      if (this.cfg.debug) this.log(`offline persist failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /**
+   * Replay persisted batches on init. Each body is re-sent through the existing
+   * transport (retry/backoff/Retry-After preserved). An entry is dropped only
+   * when accepted (2xx → resolve) or permanently undeliverable (4xx non-429);
+   * a transient failure leaves it on disk for a later run. Fully fail-open.
+   */
+  private async drainOfflineQueue(): Promise<void> {
+    if (!this.offlineQueue.isActive()) return;
+    try {
+      const replayed = await this.offlineQueue.drain(async (body) => {
+        if (this.shuttingDown) return 'retry';
+        try {
+          await this.sendWithRetry(body);
+          return 'done';
+        } catch (err) {
+          const error = err instanceof Error ? err : new Error(String(err));
+          // Permanently undeliverable → drop it; transient → keep for next init.
+          return isPermanentlyUndeliverable(error) ? 'done' : 'retry';
+        }
+      });
+      if (replayed > 0 && this.cfg.debug) this.log(`replayed ${replayed} persisted batch(es) from offline spool`);
+    } catch (err) {
+      if (this.cfg.debug) this.log(`offline drain failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -353,6 +456,18 @@ function isRetryable(err: Error): boolean {
   }
   // Network errors, aborts → retryable.
   return true;
+}
+
+/**
+ * A 4xx response other than 429 is a permanent rejection (bad key, malformed
+ * payload, etc.): replaying it would never succeed, so it must NOT be persisted
+ * and, if already persisted, should be evicted rather than retried forever.
+ * Network errors and 5xx/408/429 are transient → safe to persist & replay.
+ */
+function isPermanentlyUndeliverable(err: Error): boolean {
+  const status = (err as Error & { status?: number }).status;
+  if (typeof status !== 'number') return false; // network / abort → transient
+  return status >= 400 && status < 500 && status !== 429;
 }
 
 function isLikelyTestRuntime(): boolean {
