@@ -8,6 +8,12 @@ export interface OtlpEncodeConfig {
   environment?: string;
   release?: string;
   redactKeys?: (string | RegExp)[];
+  /**
+   * Release-health session id, emitted as the `allstak.session.id` resource
+   * attribute so the backend's error consumer can correlate events to the
+   * active session (markSessionErrored / markSessionCrashed).
+   */
+  sessionId?: string;
 }
 
 export function toOtlpJson(spans: unknown[], config: OtlpEncodeConfig): Record<string, unknown> {
@@ -16,6 +22,7 @@ export function toOtlpJson(spans: unknown[], config: OtlpEncodeConfig): Record<s
     kv('service.name', config.serviceName),
     kv('deployment.environment.name', config.environment),
     kv('service.version', config.release),
+    kv('allstak.session.id', config.sessionId),
     kv('telemetry.sdk.name', SDK_NAME),
     kv('telemetry.sdk.version', SDK_VERSION),
     kv('telemetry.sdk.language', 'nodejs'),

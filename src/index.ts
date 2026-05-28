@@ -1,9 +1,13 @@
 import { SDK_NAME, SDK_VERSION } from './version';
 import { toOtlpJson } from './otlp';
+import { SessionTracker } from './session';
+import type { SessionStatus } from './session';
 
 export { SDK_NAME, SDK_VERSION } from './version';
 export { toOtlpJson, toOtlpSpan, encodeAttributes } from './otlp';
 export type { OtlpEncodeConfig } from './otlp';
+export { SessionTracker } from './session';
+export type { SessionStatus, SessionTrackerConfig } from './session';
 
 const DEFAULT_HOST = 'https://api.allstak.sa';
 const DEFAULT_EXPORT_TIMEOUT_MS = 5_000;
@@ -69,6 +73,15 @@ export interface AllStakOtelExporterConfig {
   maxRetries?: number;
   /** Register the configured release at exporter startup. Default true. */
   autoRegisterRelease?: boolean;
+  /**
+   * Track one release-health session per process (Sentry-style). Posts
+   * `/sessions/start` on init and `/sessions/end` on shutdown. Default true.
+   */
+  enableAutoSessionTracking?: boolean;
+  /** Identifier of the current user, attached to the session start payload. */
+  userId?: string;
+  /** Platform reported on the session payload. Default "node". */
+  platform?: string;
   /** Enable debug logging. Default false. */
   debug?: boolean;
   /** Override fetch (for testing). */
@@ -87,10 +100,11 @@ export class AllStakOtelExporter {
   readonly sdkVersion = SDK_VERSION;
 
   private readonly endpoint: string;
-  private readonly cfg: Required<Omit<AllStakOtelExporterConfig, 'fetch' | 'redactKeys' | 'host' | 'serviceName' | 'environment' | 'release'>> &
-    Pick<AllStakOtelExporterConfig, 'fetch' | 'redactKeys' | 'serviceName' | 'environment' | 'release'>;
+  private readonly cfg: Required<Omit<AllStakOtelExporterConfig, 'fetch' | 'redactKeys' | 'host' | 'serviceName' | 'environment' | 'release' | 'userId'>> &
+    Pick<AllStakOtelExporterConfig, 'fetch' | 'redactKeys' | 'serviceName' | 'environment' | 'release' | 'userId'>;
   private readonly releaseEndpoint: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly session: SessionTracker;
   private queue: QueuedSpan[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
   private inflight = 0;
@@ -116,6 +130,9 @@ export class AllStakOtelExporter {
       exportTimeoutMs: config.exportTimeoutMs ?? DEFAULT_EXPORT_TIMEOUT_MS,
       maxRetries: config.maxRetries ?? DEFAULT_MAX_RETRIES,
       autoRegisterRelease: config.autoRegisterRelease ?? true,
+      enableAutoSessionTracking: config.enableAutoSessionTracking ?? true,
+      platform: config.platform ?? 'node',
+      userId: config.userId,
       debug: config.debug ?? false,
       fetch: config.fetch,
     };
@@ -123,7 +140,37 @@ export class AllStakOtelExporter {
     if (!this.fetchImpl) {
       throw new Error('AllStakOtelExporter: fetch is not available in this runtime');
     }
+    // Sessions are never sampled, but they are skipped under a unit-test
+    // runtime so test suites don't emit lifecycle traffic (parity with the
+    // release-registration guard and the Java SDK's test guard).
+    this.session = new SessionTracker({
+      host,
+      apiKey: this.cfg.apiKey,
+      release: this.cfg.release,
+      environment: this.cfg.environment,
+      userId: this.cfg.userId,
+      platform: this.cfg.platform,
+      enabled: this.cfg.enableAutoSessionTracking && !isLikelyTestRuntime(),
+      debug: this.cfg.debug,
+      fetch: this.fetchImpl,
+    });
     this.registerRuntimeRelease();
+    this.session.start();
+  }
+
+  /** Stable session id attached to every exported trace batch. */
+  getSessionId(): string {
+    return this.session.getSessionId();
+  }
+
+  /** Record a HANDLED error against the active session (status `ok` → `errored`). */
+  recordError(): void {
+    this.session.recordError();
+  }
+
+  /** Record an UNHANDLED / fatal crash against the active session (status `crashed`). */
+  recordCrash(): void {
+    this.session.recordCrash();
   }
 
   /** OTel SpanExporter contract. */
@@ -155,6 +202,8 @@ export class AllStakOtelExporter {
     this.shuttingDown = true;
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
     await this.drain();
+    // Best-effort, fire-and-forget; never blocks or throws the shutdown path.
+    this.session.end();
   }
 
   async forceFlush(): Promise<void> {
@@ -190,6 +239,7 @@ export class AllStakOtelExporter {
       environment: this.cfg.environment,
       release: this.cfg.release,
       redactKeys: this.cfg.redactKeys,
+      sessionId: this.session.getSessionId(),
     });
     this.inflight++;
     try {
