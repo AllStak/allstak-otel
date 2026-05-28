@@ -73,6 +73,12 @@ The exporter redacts common sensitive attribute keys before sending spans. Add `
 - Missing service name: set `serviceName` on the exporter.
 - Process exits early: call `await sdk.shutdown()` or `await exporter.forceFlush()`.
 
+## Contributing and Support
+
+- Report bugs with the GitHub bug report template: https://github.com/AllStak/allstak-otel/issues/new/choose
+- Open pull requests using the checklist in [CONTRIBUTING.md](CONTRIBUTING.md).
+- Report security vulnerabilities privately through [SECURITY.md](SECURITY.md).
+
 ## License
 
 MIT
