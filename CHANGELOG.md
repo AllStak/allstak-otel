@@ -7,7 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## 0.1.0-beta.5 - 2026-05-29
 
 This release lifts `@allstak/otel` from a bare OTLP `SpanExporter` toward
-`@sentry/opentelemetry`-class coverage: release-health sessions, an offline
+Full observability coverage: release-health sessions, an offline
 store, value-pattern PII scrubbing, and a distributed-trace propagator/sampler.
 All additions keep `@opentelemetry/*` a peer dependency — no new runtime deps.
 
@@ -44,7 +44,7 @@ All additions keep `@opentelemetry/*` a peer dependency — no new runtime deps.
   - Explicitly-set `user.*` fields are never value-scrubbed in either mode.
   New `scrubValueString` helper and `sendDefaultPii` config flag.
 - **Distributed-tracing propagator + sampler** (parity with
-  `@sentry/opentelemetry`):
+  OpenTelemetry-based SDKs):
   - `AllStakPropagator` — an OpenTelemetry `TextMapPropagator` for W3C
     `traceparent` + `baggage` inject/extract, so trace continuity survives
     process/service boundaries without relying solely on the host's upstream
