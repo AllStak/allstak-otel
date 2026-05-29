@@ -70,6 +70,19 @@ export interface AllStakOtelExporterConfig {
   release?: string;
   /** Extra attribute key patterns to redact (case-insensitive). */
   redactKeys?: (string | RegExp)[];
+  /**
+   * Sentry-style PII toggle. Default **false** (Sentry parity). Controls only
+   * the value-pattern scrubbers for personal data that leaks into free-text
+   * attribute values:
+   *   - false → email addresses and IPv4/IPv6 addresses in attribute values are
+   *     replaced with `[REDACTED]`, and any auto-collected client IP is dropped.
+   *   - true  → the caller has opted into PII; those value scrubbers are
+   *     disabled and auto-collected client IP is allowed through.
+   * Always-on scrubbing (credit-card numbers that pass Luhn, hyphenated US SSNs)
+   * and key-name redaction apply regardless of this flag. Explicitly-set user
+   * fields (`user.*`) are never value-scrubbed in either mode.
+   */
+  sendDefaultPii?: boolean;
   /** Max spans per HTTP request. Default 256. */
   maxBatchSize?: number;
   /** Max spans buffered before drop-oldest. Default 2048. */
@@ -155,6 +168,7 @@ export class AllStakOtelExporter {
       enableAutoSessionTracking: config.enableAutoSessionTracking ?? true,
       enableOfflineQueue: config.enableOfflineQueue ?? true,
       offlineQueue: config.offlineQueue,
+      sendDefaultPii: config.sendDefaultPii ?? false,
       platform: config.platform ?? 'node',
       userId: config.userId,
       debug: config.debug ?? false,
@@ -300,6 +314,7 @@ export class AllStakOtelExporter {
       release: this.cfg.release,
       redactKeys: this.cfg.redactKeys,
       sessionId: this.session.getSessionId(),
+      sendDefaultPii: this.cfg.sendDefaultPii,
     });
     const body = JSON.stringify(payload);
     this.inflight++;

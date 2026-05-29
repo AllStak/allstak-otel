@@ -1,5 +1,10 @@
 import { SDK_NAME, SDK_VERSION } from './version';
-import { buildExtraPatterns, isSensitiveKey } from './redaction';
+import {
+  buildExtraPatterns,
+  isSensitiveKey,
+  isValueScrubExemptKey,
+  scrubValueString,
+} from './redaction';
 
 const REDACTED = '[REDACTED]';
 
@@ -14,10 +19,28 @@ export interface OtlpEncodeConfig {
    * active session (markSessionErrored / markSessionCrashed).
    */
   sessionId?: string;
+  /**
+   * Sentry-style `sendDefaultPii` toggle (default false). When false, email
+   * addresses and IPv4/IPv6 addresses found in free-text attribute *values*
+   * are scrubbed to `[REDACTED]`. When true, the caller has opted into PII so
+   * those value scrubbers are disabled (always-on credit-card / SSN scrubbing
+   * still applies). Key-name redaction is unaffected.
+   */
+  sendDefaultPii?: boolean;
+}
+
+/**
+ * Per-encode context threaded through the span/attribute walk: the compiled
+ * extra key patterns plus the resolved sendDefaultPii flag.
+ */
+interface EncodeCtx {
+  extraRedact: RegExp[];
+  sendDefaultPii: boolean;
 }
 
 export function toOtlpJson(spans: unknown[], config: OtlpEncodeConfig): Record<string, unknown> {
   const extra = buildExtraPatterns(config.redactKeys);
+  const sendDefaultPii = config.sendDefaultPii === true;
   const resourceAttrs = [
     kv('service.name', config.serviceName),
     kv('deployment.environment.name', config.environment),
@@ -34,7 +57,7 @@ export function toOtlpJson(spans: unknown[], config: OtlpEncodeConfig): Record<s
         scopeSpans: [
           {
             scope: { name: SDK_NAME, version: SDK_VERSION },
-            spans: spans.map((span) => toOtlpSpan(span, extra)),
+            spans: spans.map((span) => toOtlpSpan(span, extra, sendDefaultPii)),
           },
         ],
       },
@@ -42,27 +65,33 @@ export function toOtlpJson(spans: unknown[], config: OtlpEncodeConfig): Record<s
   };
 }
 
-export function toOtlpSpan(span: unknown, extraRedact: RegExp[] = []): Record<string, unknown> {
+export function toOtlpSpan(
+  span: unknown,
+  extraRedact: RegExp[] = [],
+  sendDefaultPii = false,
+): Record<string, unknown> {
   const item = span as Record<string, unknown>;
   const context = readSpanContext(item);
   const start = readHrTime(item.startTime, 'startTimeUnixNano');
   const end = readHrTime(item.endTime, 'endTimeUnixNano');
   const status = (item.status as Record<string, unknown> | undefined) ?? {};
+  const ctx: EncodeCtx = { extraRedact, sendDefaultPii };
   const out: Record<string, unknown> = {
     traceId: asString(context.traceId),
     spanId: asString(context.spanId),
     parentSpanId: asString(readParentSpanId(item)),
+    // Span / operation name is an identifier, not free text → not value-scrubbed.
     name: asString(item.name) || 'otel.span',
     kind: normalizeKind(item.kind),
     startTimeUnixNano: start,
     endTimeUnixNano: end,
-    attributes: encodeAttributes((item.attributes as Record<string, unknown>) || {}, extraRedact),
+    attributes: encodeAttributes((item.attributes as Record<string, unknown>) || {}, extraRedact, sendDefaultPii),
     droppedAttributesCount: numberOrZero(item.droppedAttributesCount),
-    events: encodeEvents(item.events, extraRedact),
+    events: encodeEvents(item.events, ctx),
     droppedEventsCount: numberOrZero(item.droppedEventsCount),
-    links: encodeLinks(item.links, extraRedact),
+    links: encodeLinks(item.links, ctx),
     droppedLinksCount: numberOrZero(item.droppedLinksCount),
-    status: encodeStatus(status),
+    status: encodeStatus(status, ctx),
   };
   const traceState = context.traceState;
   if (traceState && typeof traceState === 'string') out.traceState = traceState;
@@ -107,7 +136,7 @@ function normalizeKind(kind: unknown): number {
   return 0;
 }
 
-function encodeStatus(status: Record<string, unknown>): Record<string, unknown> {
+function encodeStatus(status: Record<string, unknown>, ctx: EncodeCtx): Record<string, unknown> {
   const codeRaw = status.code;
   let code = 0;
   if (typeof codeRaw === 'number') code = codeRaw === 1 || codeRaw === 2 ? codeRaw : 0;
@@ -117,13 +146,20 @@ function encodeStatus(status: Record<string, unknown>): Record<string, unknown> 
   }
   const out: Record<string, unknown> = { code };
   const msg = status.message;
-  if (typeof msg === 'string' && msg.length > 0) out.message = msg;
+  // status.message is the error/exception message → free text, value-scrubbed.
+  if (typeof msg === 'string' && msg.length > 0) {
+    out.message = scrubValueString(msg, ctx.sendDefaultPii);
+  }
   return out;
 }
+
+/** Max nesting depth scanned for value scrubbing inside object/array attrs. */
+const MAX_SCRUB_DEPTH = 8;
 
 export function encodeAttributes(
   attrs: Record<string, unknown> | Array<{ key: string; value: unknown }>,
   extraRedact: RegExp[] = [],
+  sendDefaultPii = false,
 ): Array<{ key: string; value: Record<string, unknown> }> {
   const entries: Array<[string, unknown]> = Array.isArray(attrs)
     ? attrs.map((a) => [a.key, a.value])
@@ -131,16 +167,33 @@ export function encodeAttributes(
   const out: Array<{ key: string; value: Record<string, unknown> }> = [];
   for (const [key, raw] of entries) {
     if (!key) continue;
-    const value = isSensitiveKey(key, extraRedact) ? REDACTED : raw;
-    const encoded = encodeAnyValue(value);
+    // 1) Key-name redaction wins outright (sensitive key → fully redacted).
+    if (isSensitiveKey(key, extraRedact)) {
+      const enc = encodeAnyValue(REDACTED, false, sendDefaultPii, 0);
+      if (enc) out.push({ key, value: enc });
+      continue;
+    }
+    // 2) Otherwise apply value-pattern scrubbing to string values, UNLESS the
+    //    key is exempt (explicit user identity, code locations, URLs, release /
+    //    sdk fields — those ship intact, matching Sentry semantics).
+    const scrub = !isValueScrubExemptKey(key);
+    const encoded = encodeAnyValue(raw, scrub, sendDefaultPii, 0);
     if (encoded) out.push({ key, value: encoded });
   }
   return out;
 }
 
-function encodeAnyValue(value: unknown): Record<string, unknown> | null {
+function encodeAnyValue(
+  value: unknown,
+  scrub: boolean,
+  sendDefaultPii: boolean,
+  depth: number,
+): Record<string, unknown> | null {
   if (value === null || value === undefined) return null;
-  if (typeof value === 'string') return { stringValue: value };
+  if (typeof value === 'string') {
+    const v = scrub ? scrubValueString(value, sendDefaultPii) : value;
+    return { stringValue: v };
+  }
   if (typeof value === 'boolean') return { boolValue: value };
   if (typeof value === 'number') {
     if (Number.isFinite(value) && Number.isInteger(value) && Math.abs(value) < Number.MAX_SAFE_INTEGER) {
@@ -149,42 +202,54 @@ function encodeAnyValue(value: unknown): Record<string, unknown> | null {
     return { doubleValue: value };
   }
   if (typeof value === 'bigint') return { intValue: value.toString() };
+  // Stop descending past the depth cap; encode remaining nesting without
+  // further string scrubbing rather than recursing unbounded.
+  const childScrub = scrub && depth < MAX_SCRUB_DEPTH;
   if (Array.isArray(value)) {
-    return { arrayValue: { values: value.map(encodeAnyValue).filter(Boolean) } };
+    return {
+      arrayValue: {
+        values: value.map((v) => encodeAnyValue(v, childScrub, sendDefaultPii, depth + 1)).filter(Boolean),
+      },
+    };
   }
   if (typeof value === 'object') {
     const kv: Array<{ key: string; value: Record<string, unknown> }> = [];
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      const enc = encodeAnyValue(v);
+      // Honor per-key exemptions on nested object keys too (e.g. a `user`
+      // object whose `email` should not be value-scrubbed).
+      const nestedScrub = childScrub && !isValueScrubExemptKey(k);
+      const enc = encodeAnyValue(v, nestedScrub, sendDefaultPii, depth + 1);
       if (enc) kv.push({ key: k, value: enc });
     }
     return { kvlistValue: { values: kv } };
   }
-  return { stringValue: String(value) };
+  const coerced = String(value);
+  return { stringValue: scrub ? scrubValueString(coerced, sendDefaultPii) : coerced };
 }
 
-function encodeEvents(events: unknown, extraRedact: RegExp[]): Array<Record<string, unknown>> {
+function encodeEvents(events: unknown, ctx: EncodeCtx): Array<Record<string, unknown>> {
   if (!Array.isArray(events)) return [];
   return events.map((evt) => {
     const e = evt as Record<string, unknown>;
     return {
       timeUnixNano: readHrTime(e.time, 'timeUnixNano'),
+      // Event name (e.g. breadcrumb category) is an identifier → not scrubbed.
       name: asString(e.name),
-      attributes: encodeAttributes((e.attributes as Record<string, unknown>) || {}, extraRedact),
+      attributes: encodeAttributes((e.attributes as Record<string, unknown>) || {}, ctx.extraRedact, ctx.sendDefaultPii),
       droppedAttributesCount: numberOrZero(e.droppedAttributesCount),
     };
   });
 }
 
-function encodeLinks(links: unknown, extraRedact: RegExp[]): Array<Record<string, unknown>> {
+function encodeLinks(links: unknown, ctx: EncodeCtx): Array<Record<string, unknown>> {
   if (!Array.isArray(links)) return [];
   return links.map((lnk) => {
     const l = lnk as Record<string, unknown>;
-    const ctx = (l.context || l.spanContext) as Record<string, string> | undefined;
+    const linkCtx = (l.context || l.spanContext) as Record<string, string> | undefined;
     return {
-      traceId: asString(ctx?.traceId),
-      spanId: asString(ctx?.spanId),
-      attributes: encodeAttributes((l.attributes as Record<string, unknown>) || {}, extraRedact),
+      traceId: asString(linkCtx?.traceId),
+      spanId: asString(linkCtx?.spanId),
+      attributes: encodeAttributes((l.attributes as Record<string, unknown>) || {}, ctx.extraRedact, ctx.sendDefaultPii),
       droppedAttributesCount: numberOrZero(l.droppedAttributesCount),
     };
   });

@@ -62,10 +62,27 @@ await exporter.forceFlush();
 | `exportTimeoutMs` | Per-request timeout. |
 | `maxRetries` | Retry attempts for transient failures. |
 | `redactKeys` | Extra attribute keys to redact. |
+| `sendDefaultPii` | Allow personal data (email/IP) in free-text values. Default `false`. |
 
 ## Privacy
 
-The exporter redacts common sensitive attribute keys before sending spans. Add `redactKeys` for app-specific fields.
+The exporter scrubs sensitive data before sending spans, in two layers:
+
+- **Key-name redaction** — attribute keys that look sensitive (`authorization`,
+  `cookie`, `*_token`, `*_password`, `*_secret`, `api_key`, `jwt`, `bearer`, …)
+  have their value replaced with `[REDACTED]`. Add `redactKeys` for app-specific
+  fields.
+- **Value-pattern scrubbing** — PII that leaks into free-text *values* (error
+  messages, breadcrumb/log data, captured HTTP fields):
+  - **Always** redacted: credit-card numbers that pass the Luhn checksum, and
+    hyphenated US SSNs (`ddd-dd-dddd`).
+  - Redacted **unless `sendDefaultPii: true`**: email addresses and IPv4/IPv6
+    addresses.
+
+`sendDefaultPii` defaults to `false` for Sentry parity. Set it to `true` only if
+you intentionally want emails/IPs in telemetry. Explicitly-set user fields
+(`user.*`), stack-frame file paths, URLs, and release/version/SDK fields are
+never value-scrubbed.
 
 ## Troubleshooting
 
