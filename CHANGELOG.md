@@ -1,15 +1,31 @@
 # Changelog
 
-<<<<<<< HEAD
 All notable changes to @allstak/otel will be documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [0.1.0-beta.1] - 2026-04-25
+## 0.1.0-beta.5 - 2026-05-29
 
 ### Added
-- Initial public release.
-=======
+- Distributed-tracing helpers for parity with `@sentry/opentelemetry` (this
+  package was previously a bare `SpanExporter`):
+  - `AllStakPropagator` — an OpenTelemetry `TextMapPropagator` for W3C
+    `traceparent` + `baggage` inject/extract, so trace continuity survives
+    process/service boundaries without relying solely on the host's upstream
+    OTel setup. Structurally typed (no hard `@opentelemetry/api` import) and
+    fully fail-open.
+  - `allstakSampler` / `AllStakTraceRatioSampler` — a parent-respecting ratio
+    sampler honoring `allstakTracesSampleRate` (root-trace ratio decision;
+    children inherit the parent's sampled flag). Includes `alwaysOnSampler` /
+    `alwaysOffSampler` helpers.
+  - `AllStakSpanProcessor` — a thin convenience `SpanProcessor` that forwards
+    ended spans to the `AllStakOtelExporter` (and `forceFlush` / `shutdown`).
+- These are exported so users can register propagation + sampling alongside the
+  exporter. `@opentelemetry/*` stays a peer dependency — no new runtime deps.
+
+### Notes
+- Propagator inject/extract roundtrip + sampler decision tests added.
+
 ## 0.1.0-beta.4 - 2026-05-18
 
 ### Added
@@ -48,4 +64,8 @@ OTLP wire-format correctness pass and runtime hardening. Still **beta** — pend
 
 - Experimental beta package for OpenTelemetry OTLP JSON export to AllStak.
 - npm `beta` points at this version; npm `latest` still pointed at `0.1.0-beta.1` during the 2026-05-17 audit.
->>>>>>> 14c2556 (feat(redact): parity with @allstak/js v0.2.3 — +jwt/+bearer deny-list)
+
+## [0.1.0-beta.1] - 2026-04-25
+
+### Added
+- Initial public release.

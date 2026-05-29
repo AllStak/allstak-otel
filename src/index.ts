@@ -18,6 +18,45 @@ export type { SessionStatus, SessionTrackerConfig } from './session';
 export { OfflineQueue, FileSpoolAdapter } from './persistence';
 export type { PersistenceAdapter, PersistedEntry, OfflineQueueConfig } from './persistence';
 
+// Distributed-tracing helpers (parity with @sentry/opentelemetry).
+export {
+  AllStakPropagator,
+  allstakPropagator,
+  formatTraceParent,
+  parseTraceParent,
+  parseBaggage,
+  formatBaggage,
+  isValidTraceId,
+  isValidSpanId,
+  isSampled,
+  TRACEPARENT_HEADER,
+  TRACESTATE_HEADER,
+  BAGGAGE_HEADER,
+} from './propagation';
+export type {
+  TextMapPropagator,
+  TextMapSetter,
+  TextMapGetter,
+  OtelContext,
+  SpanContextLike,
+  BaggageEntry,
+} from './propagation';
+export {
+  SamplingDecision,
+  AllStakTraceRatioSampler,
+  AllStakParentBasedSampler,
+  AlwaysOnSampler,
+  AlwaysOffSampler,
+  allstakSampler,
+  alwaysOnSampler,
+  alwaysOffSampler,
+  normalizeSampleRate,
+  traceIdInSampleRatio,
+} from './sampling';
+export type { Sampler, SamplingResult, AllStakSamplerConfig } from './sampling';
+export { AllStakSpanProcessor } from './processor';
+export type { SpanProcessor, SpanExporterLike } from './processor';
+
 const DEFAULT_HOST = 'https://api.allstak.sa';
 const DEFAULT_EXPORT_TIMEOUT_MS = 5_000;
 const DEFAULT_MAX_BATCH_SIZE = 256;
