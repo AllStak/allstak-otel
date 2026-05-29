@@ -13,7 +13,7 @@ All additions keep `@opentelemetry/*` a peer dependency — no new runtime deps.
 
 ### Added
 - **Release-health session tracking** (`SessionTracker`,
-  `enableAutoSessionTracking`, default on). One session per process, Sentry-style:
+  `enableAutoSessionTracking`, default on). One session per process, standard:
   POSTs `/ingest/v1/sessions/start` on init and `/ingest/v1/sessions/end` on
   shutdown so the dashboard can compute crash-free rate. Status vocabulary
   (`ok` / `errored` / `crashed` / `abnormal`) matches the backend
@@ -26,7 +26,7 @@ All additions keep `@opentelemetry/*` a peer dependency — no new runtime deps.
   error, retries exhausted, offline, or shutdown with events still buffered) are
   spooled to a filesystem store (`<tmpdir>/allstak-otel-spool` by default) and
   replayed on the next init, so buffered telemetry survives a process restart or
-  outage (Sentry offline-store parity). Drop-oldest eviction with `maxEntries` /
+  outage (offline-store parity). Drop-oldest eviction with `maxEntries` /
   `maxBytes` / `maxAgeMs` caps; pluggable `adapter`. Payloads are PII-scrubbed
   before they are written; session lifecycle calls are never persisted. Degrades
   to a silent no-op when the spool dir is not writable (read-only FS, edge,
@@ -39,7 +39,7 @@ All additions keep `@opentelemetry/*` a peer dependency — no new runtime deps.
     Luhn checksum (Luhn-failing digit runs are left intact to avoid mangling
     order IDs), and hyphenated US SSNs (`ddd-dd-dddd`; bare 9-digit numbers are
     intentionally not matched).
-  - Scrubbed unless `sendDefaultPii: true` (default `false`, Sentry parity):
+  - Scrubbed unless `sendDefaultPii: true` (default `false`, ):
     email addresses and IPv4/IPv6 addresses; auto-collected client IP is dropped.
   - Explicitly-set `user.*` fields are never value-scrubbed in either mode.
   New `scrubValueString` helper and `sendDefaultPii` config flag.
