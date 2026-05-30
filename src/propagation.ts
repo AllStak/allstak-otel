@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Distributed-tracing propagation (W3C traceparent + baggage)
 //
-// Parity with @sentry/opentelemetry: this package previously shipped only a
+// This package previously shipped only a
 // SpanExporter, so cross-service trace continuity relied entirely on the host
 // app's upstream OTel propagator setup. `AllStakPropagator` implements the
 // OpenTelemetry `TextMapPropagator` contract so users can register it directly
@@ -254,8 +254,8 @@ export function __setOtelApiBridge(api: OtelApiBridge | undefined): void {
 
 /**
  * W3C `traceparent` + `baggage` propagator implementing the OpenTelemetry
- * `TextMapPropagator` contract. Drop-in for `propagation.setGlobalPropagator`
- * (parity with `@sentry/opentelemetry`'s sentry propagator), so AllStak users
+ * `TextMapPropagator` contract. Drop-in for `propagation.setGlobalPropagator`,
+ * so AllStak users
  * get cross-service trace continuity without configuring the OTel core
  * `W3CTraceContextPropagator` + `W3CBaggagePropagator` themselves.
  *

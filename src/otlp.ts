@@ -20,7 +20,7 @@ export interface OtlpEncodeConfig {
    */
   sessionId?: string;
   /**
-   * Sentry-style `sendDefaultPii` toggle (default false). When false, email
+   * `sendDefaultPii` toggle (default false). When false, email
    * addresses and IPv4/IPv6 addresses found in free-text attribute *values*
    * are scrubbed to `[REDACTED]`. When true, the caller has opted into PII so
    * those value scrubbers are disabled (always-on credit-card / SSN scrubbing
@@ -175,7 +175,7 @@ export function encodeAttributes(
     }
     // 2) Otherwise apply value-pattern scrubbing to string values, UNLESS the
     //    key is exempt (explicit user identity, code locations, URLs, release /
-    //    sdk fields — those ship intact, matching Sentry semantics).
+    //    sdk fields — those ship intact).
     const scrub = !isValueScrubExemptKey(key);
     const encoded = encodeAnyValue(raw, scrub, sendDefaultPii, 0);
     if (encoded) out.push({ key, value: encoded });

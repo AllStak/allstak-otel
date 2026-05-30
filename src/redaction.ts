@@ -44,7 +44,7 @@ function escapeRegex(value: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// VALUE-PATTERN PII scrubbing (Sentry data-scrubbing parity)
+// VALUE-PATTERN PII scrubbing
 //
 // Key-name redaction (above) only fires when the *key* looks sensitive. This
 // layer scrubs PII that leaks into free-text *values* (e.g. an exception
@@ -57,8 +57,8 @@ function escapeRegex(value: string): string {
 //          do not nuke order ids / timestamps / phone numbers.
 //        - US SSN in the hyphenated `ddd-dd-dddd` form (bare 9-digit numbers
 //          are NOT matched — too ambiguous).
-//   B) Scrubbed UNLESS `sendDefaultPii === true` (default false = Sentry
-//      parity): email addresses and validated IPv4 addresses.
+//   B) Scrubbed UNLESS `sendDefaultPii === true` (default false, safe by
+//      default): email addresses and validated IPv4 addresses.
 //
 // Regexes are compiled once at module load. Scanning is bounded by
 // MAX_SCAN_LENGTH so a pathological multi-MB string can't stall the wire path.
@@ -164,7 +164,7 @@ export function scrubValueString(input: string, sendDefaultPii: boolean): string
 /**
  * Attribute keys whose string values must NOT be value-scrubbed:
  *   - explicit user / end-user identity (`user.*`, `enduser.*`) — set
- *     deliberately by the app, ships as-is (matches Sentry: sendDefaultPii does
+ *     deliberately by the app, ships as-is (sendDefaultPii does
  *     not strip explicitly-set user data),
  *   - code locations / file paths / functions (stack-frame fields),
  *   - URLs and paths (covered by their own URL redactor upstream),

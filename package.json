@@ -1,6 +1,6 @@
 {
   "name": "@allstak/otel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AllStak OpenTelemetry OTLP JSON exporter (beta). Batches, retries, and redacts sensitive attributes before sending spans to AllStak.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",

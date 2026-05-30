@@ -18,7 +18,7 @@ export type { SessionStatus, SessionTrackerConfig } from './session';
 export { OfflineQueue, FileSpoolAdapter } from './persistence';
 export type { PersistenceAdapter, PersistedEntry, OfflineQueueConfig } from './persistence';
 
-// Distributed-tracing helpers (parity with @sentry/opentelemetry).
+// Distributed-tracing helpers.
 export {
   AllStakPropagator,
   allstakPropagator,
@@ -110,7 +110,7 @@ export interface AllStakOtelExporterConfig {
   /** Extra attribute key patterns to redact (case-insensitive). */
   redactKeys?: (string | RegExp)[];
   /**
-   * Sentry-style PII toggle. Default **false** (Sentry parity). Controls only
+   * PII toggle. Default **false** (safe by default). Controls only
    * the value-pattern scrubbers for personal data that leaks into free-text
    * attribute values:
    *   - false → email addresses and IPv4/IPv6 addresses in attribute values are
@@ -135,7 +135,7 @@ export interface AllStakOtelExporterConfig {
   /** Register the configured release at exporter startup. Default true. */
   autoRegisterRelease?: boolean;
   /**
-   * Track one release-health session per process (Sentry-style). Posts
+   * Track one release-health session per process. Posts
    * `/sessions/start` on init and `/sessions/end` on shutdown. Default true.
    */
   enableAutoSessionTracking?: boolean;
@@ -147,7 +147,7 @@ export interface AllStakOtelExporterConfig {
    * Persist OTLP trace batches that fail to deliver (network error, retries
    * exhausted, offline, or shutdown with events still buffered) to a filesystem
    * spool and replay them on the next init, so buffered telemetry survives a
-   * process restart or a network outage (Sentry offline-store parity). Payloads
+   * process restart or a network outage. Payloads
    * are already PII-scrubbed before they are written. Default true; degrades to
    * a silent no-op when the spool dir is not writable (read-only FS, edge,
    * serverless). Session lifecycle calls are never persisted. */

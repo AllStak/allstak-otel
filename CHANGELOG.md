@@ -4,6 +4,21 @@ All notable changes to @allstak/otel will be documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 0.1.1 - 2026-05-30
+
+First stable patch on npm consolidating the full observability feature set:
+release-health session tracking, an offline/persistent transport queue,
+value-pattern PII scrubbing with a `sendDefaultPii` toggle, and a
+distributed-trace propagator + ratio sampler. All additions keep
+`@opentelemetry/*` a peer dependency — no new runtime deps.
+
+### Changed
+- Documentation and inline comments reworded to neutral, self-describing
+  language. No runtime behavior change.
+
+### Notes
+- `npm run build` (tsup CJS+ESM+dts) and `npm test` (vitest) green.
+
 ## 0.1.0-beta.5 - 2026-05-29
 
 This release lifts `@allstak/otel` from a bare OTLP `SpanExporter` toward

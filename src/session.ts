@@ -4,7 +4,7 @@ import { SDK_NAME, SDK_VERSION } from './version';
  * Lifecycle status of a release-health session.
  *
  * Vocabulary matches the AllStak backend's `/ingest/v1/sessions/end` contract
- * and Sentry's release-health conventions (mirrors the Java SDK's
+ * and standard release-health conventions (mirrors the Java SDK's
  * `SessionStatus` enum):
  *
  *  - `ok`       — session ended normally with at most non-fatal logs.
@@ -62,7 +62,7 @@ export interface SessionTrackerConfig {
 }
 
 /**
- * Sentry-style "one session per process / app-launch" tracker.
+ * A "one session per process / app-launch" tracker.
  *
  * On {@link start} the SDK POSTs `/ingest/v1/sessions/start` with the session
  * id, the resolved release (falling back to the SDK version), and an SDK

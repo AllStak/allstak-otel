@@ -79,7 +79,7 @@ The exporter scrubs sensitive data before sending spans, in two layers:
   - Redacted **unless `sendDefaultPii: true`**: email addresses and IPv4/IPv6
     addresses.
 
-`sendDefaultPii` defaults to `false` for Sentry parity. Set it to `true` only if
+`sendDefaultPii` defaults to `false` for safe-by-default behavior. Set it to `true` only if
 you intentionally want emails/IPs in telemetry. Explicitly-set user fields
 (`user.*`), stack-frame file paths, URLs, and release/version/SDK fields are
 never value-scrubbed.

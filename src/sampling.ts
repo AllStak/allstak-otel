@@ -1,10 +1,10 @@
 // ---------------------------------------------------------------------------
-// Trace sampling helpers (parity with @sentry/opentelemetry tracesSampleRate)
+// Trace sampling helpers exposing a simple `allstakTracesSampleRate` knob.
 //
 // This package previously exposed only a SpanExporter, so the sampling decision
 // lived entirely in the host's OTel `TracerProvider` config. These helpers let
 // AllStak users register a sampler that honors an `allstakTracesSampleRate`
-// (0..1) — the Sentry-style knob — without hand-wiring OTel's built-in
+// (0..1) — a single fraction knob — without hand-wiring OTel's built-in
 // `TraceIdRatioBasedSampler` + `ParentBasedSampler`.
 //
 // As with the exporter and propagator, `@opentelemetry/*` stays a PEER
@@ -148,7 +148,7 @@ function readParentSpanContext(context: OtelContext): SpanContextLike | undefine
 
 /**
  * Parent-based sampler honoring `allstakTracesSampleRate`. Behavior matches the
- * Sentry / OTel `ParentBased(TraceIdRatioBased(rate))` composite:
+ * OTel `ParentBased(TraceIdRatioBased(rate))` composite:
  *   - If there is a valid parent span context: inherit the parent's sampled
  *     flag (sampled parent → sample child, unsampled parent → drop child).
  *   - Otherwise (root span): apply the deterministic trace-id ratio at `rate`.
@@ -189,7 +189,7 @@ export class AllStakParentBasedSampler implements Sampler {
 
 export interface AllStakSamplerConfig {
   /**
-   * Fraction of root traces to sample, 0..1 (Sentry parity). Values outside
+   * Fraction of root traces to sample, 0..1. Values outside
    * the range are clamped; non-numeric values fail closed to 0. Default 1.0
    * (sample everything) so trace continuity is on by default once registered.
    */
@@ -199,8 +199,8 @@ export interface AllStakSamplerConfig {
 /**
  * Build the recommended sampler: a parent-respecting ratio sampler honoring
  * `allstakTracesSampleRate`. Register it on the OTel `TracerProvider`
- * (`{ sampler: allstakSampler({ allstakTracesSampleRate: 0.2 }) }`) for parity
- * with `@sentry/opentelemetry`'s `tracesSampleRate`.
+ * (`{ sampler: allstakSampler({ allstakTracesSampleRate: 0.2 }) }`) to apply a
+ * single root-trace sampling fraction.
  */
 export function allstakSampler(config: AllStakSamplerConfig = {}): Sampler {
   const rate = normalizeSampleRate(config.allstakTracesSampleRate ?? 1);
