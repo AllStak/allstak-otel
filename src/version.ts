@@ -1,2 +1,2 @@
 export const SDK_NAME = '@allstak/otel';
-export const SDK_VERSION = '0.1.1';
+export const SDK_VERSION = '0.1.2';
