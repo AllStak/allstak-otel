@@ -44,7 +44,7 @@ function makeExporter(overrides: Partial<ConstructorParameters<typeof AllStakOte
 describe('@allstak/otel — version consistency', () => {
   it('exposes SDK_NAME and SDK_VERSION', () => {
     expect(SDK_NAME).toBe('@allstak/otel');
-    expect(SDK_VERSION).toBe('0.1.1');
+    expect(SDK_VERSION).toBe((pkg as { version: string }).version);
   });
 
   it('matches package.json version', () => {
